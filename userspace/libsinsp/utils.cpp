@@ -946,6 +946,20 @@ void sinsp_utils::ts_to_string(uint64_t ts, OUT string* res, bool date, bool ns)
 	*res = buf;
 }
 
+void sinsp_utils::ts_to_iso_8601(uint64_t ts, OUT string* res)
+{
+	char buf[sizeof "YYYY-MM-DDTHH:MM:SS-0000"];
+	uint64_t ns = ts % ONE_SECOND_IN_NS;
+	time_t sec = ts / ONE_SECOND_IN_NS;
+
+	strftime(buf, sizeof(buf), "%FT%T", gmtime(&sec));
+	*res = buf;
+	sprintf(buf, ".%09u", (unsigned) ns);
+	*res += buf;
+	strftime(buf, sizeof(buf), "%z", gmtime(&sec));
+	*res += buf;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Time utility functions.
 ///////////////////////////////////////////////////////////////////////////////
