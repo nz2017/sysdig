@@ -114,6 +114,7 @@ public:
 		m_name = other.m_name;
 		m_oldname = other.m_oldname;
 		m_flags = other.m_flags;
+		m_dev = other.m_dev;
 		m_ino = other.m_ino;
 		
 		if(free_state)
@@ -246,6 +247,23 @@ public:
 		{
 			return 0;
 		}
+	}
+
+	uint32_t get_device() const
+	{
+		return m_dev;
+	}
+
+	// see new_encode_dev in include/linux/kdev_t.h
+	uint32_t get_device_major() const
+	{
+		return (m_dev & 0xfff00) >> 8;
+	}
+
+	// see new_encode_dev in include/linux/kdev_t.h
+	uint32_t get_device_minor() const
+	{
+		return (m_dev & 0xff) | ((m_dev >> 12) & 0xfff00);
 	}
 
 	/*!
@@ -460,6 +478,7 @@ private:
 
 	T* m_usrstate;
 	uint32_t m_flags;
+	uint32_t m_dev;
 	uint64_t m_ino;
 
 	fd_callbacks_info* m_callbaks;
