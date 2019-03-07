@@ -48,8 +48,9 @@ constexpr const cgroup_layout DOCKER_CGROUP_LAYOUT[] = {
 };
 }
 
-std::string docker::m_api_version = "/v1.24";
-bool libsinsp::container_engine::docker::m_enabled = true;
+std::string docker_async_source::m_api_version = "/v1.24";
+bool docker::m_enabled = true;
+std::unique_ptr<docker_async_source> docker::g_docker_info_source;
 
 docker::docker()
 {
@@ -84,58 +85,17 @@ void docker::cleanup()
 	curl_multi_cleanup(s_curlm);
 	s_curlm = NULL;
 
+	g_docker_info_source.reset(NULL);
 	m_enabled = true;
 #endif
 }
 
-std::string docker::build_request(const std::string &url)
+std::string docker_async_source::build_request(const std::string &url)
 {
 	return "http://localhost" + m_api_version + url;
 }
 
-bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, bool query_os_for_missing_info)
-{
-	sinsp_container_info container_info;
-
-	if (!m_enabled)
-	{
-		return false;
-	}
-
-	if(matches_runc_cgroups(tinfo, DOCKER_CGROUP_LAYOUT, container_info.m_id))
-	{
-		container_info.m_type = CT_DOCKER;
-		tinfo->m_container_id = container_info.m_id;
-	}
-	else
-	{
-		return false;
-	}
-	if (!manager->container_exists(container_info.m_id))
-	{
-		if (query_os_for_missing_info)
-		{
-			if (!parse_docker(manager, &container_info, tinfo))
-			{
-				// give CRI a chance to return metadata for this container
-				g_logger.format(sinsp_logger::SEV_DEBUG, "Failed to get Docker metadata for container %s",
-					container_info.m_id.c_str());
-				return false;
-			}
-		}
-		if (mesos::set_mesos_task_id(&container_info, tinfo))
-		{
-			g_logger.format(sinsp_logger::SEV_DEBUG,
-					"Mesos Docker container: [%s], Mesos task ID: [%s]",
-					container_info.m_id.c_str(), container_info.m_mesos_task_id.c_str());
-		}
-		manager->add_container(container_info, tinfo);
-		manager->notify_new_container(container_info);
-	}
-	return true;
-}
-
-docker::docker_response libsinsp::container_engine::docker::get_docker(sinsp_container_manager* manager, const std::string& url, std::string &json)
+docker_async_source::docker_response docker_async_source::get_docker(const std::string& url, std::string &json)
 {
 #ifdef HAS_CAPTURE
 	if(curl_easy_setopt(s_curl, CURLOPT_URL, url.c_str()) != CURLE_OK)
@@ -195,7 +155,7 @@ docker::docker_response libsinsp::container_engine::docker::get_docker(sinsp_con
 	{
 		case 0: /* connection failed, apparently */
 			g_logger.format(sinsp_logger::SEV_NOTICE, "Docker connection failed, disabling Docker container engine");
-			m_enabled = false;
+			docker::set_enabled(false);
 			return docker_response::RESP_ERROR;
 		case 200:
 			return docker_response::RESP_OK;
@@ -209,3 +169,15 @@ docker::docker_response libsinsp::container_engine::docker::get_docker(sinsp_con
 #endif
 }
 
+bool docker::detect_docker(const sinsp_threadinfo *tinfo, std::string &container_id, std::string &container_name)
+{
+	if(matches_runc_cgroups(tinfo, DOCKER_CGROUP_LAYOUT, container_id))
+	{
+		// The container name is only available in windows
+		container_name = "incomplete";
+
+		return true;
+	}
+
+	return false;
+}
