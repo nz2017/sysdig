@@ -24,13 +24,23 @@ limitations under the License.
 
 using namespace libsinsp::container_engine;
 
-std::string docker::m_api_version = "/v1.30";
-
 docker::docker()
 {
 }
 
 void docker::cleanup()
+{
+	// Can only be set to false from failed lookups
+	m_enabled = true;
+
+	g_docker_info_source.reset(NULL);
+}
+
+void docker_async_source::init_docker_conn()
+{
+}
+
+void docker_async_source::free_docker_conn()
 {
 }
 

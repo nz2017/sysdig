@@ -25,18 +25,22 @@ limitations under the License.
 
 using namespace libsinsp::container_engine;
 
-docker_async_source::docker_async_source(uint64_t max_wait_ms, uint64_t ttl_ms)
-	: async_key_value_source(max_wait_ms, ttl_ms)
+docker_async_source::docker_async_source(uint64_t max_wait_ms, uint64_t ttl_ms, sinsp *inspector)
+	: async_key_value_source(max_wait_ms, ttl_ms),
+	  m_inspector(inspector),
+	  m_docker_unix_socket_path("/var/run/docker.sock"),
+#ifdef _WIN32
+	  m_api_version("/v1.30"),
+#else
+	  m_api_version("/v1.24")
+#endif
 {
+	init_docker_conn();
 }
 
 docker_async_source::~docker_async_source()
 {
-}
-
-void docker_async_source::set_inspector(sinsp *inspector)
-{
-	m_inspector = inspector;
+	free_docker_conn();
 }
 
 void docker_async_source::run_impl()
@@ -45,19 +49,22 @@ void docker_async_source::run_impl()
 
 	while (dequeue_next_key(container_id))
 	{
-		sinsp_container_info container;
-		container.m_type = CT_DOCKER;
-		container.m_id = container_id;
+		container_lookup_result res;
 
-		if(!parse_docker(container_id, &container))
+		res.m_successful = true;
+		res.m_container_info.m_type = CT_DOCKER;
+		res.m_container_info.m_id = container_id;
+
+		if(!parse_docker(container_id, &res.m_container_info))
 		{
 			g_logger.format(sinsp_logger::SEV_DEBUG, "Failed to get Docker metadata for container %s",
 					container_id.c_str());
+			res.m_successful = false;
 		}
 
-		// Return a container_info object either way, to
-		// ensure any new container callbacks are called.
-		store_value(container_id, container);
+		// Return a result object either way, to ensure any
+		// new container callbacks are called.
+		store_value(container_id, res);
 	}
 }
 
@@ -157,11 +164,6 @@ void docker_async_source::set_query_image_info(bool query_image_info)
 	m_query_image_info = query_image_info;
 }
 
-void docker::set_enabled(bool enabled)
-{
-	m_enabled = enabled;
-}
-
 bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, bool query_os_for_missing_info)
 {
 	std::string container_id, container_name;
@@ -175,9 +177,8 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 	if(!g_docker_info_source)
 	{
 		uint64_t max_wait_ms = 10000;
-		docker_async_source *src = new docker_async_source(docker_async_source::NO_WAIT_LOOKUP, max_wait_ms);
+		docker_async_source *src = new docker_async_source(docker_async_source::NO_WAIT_LOOKUP, max_wait_ms, manager->get_inspector());
 		g_docker_info_source.reset(src);
-		g_docker_info_source->set_inspector(manager->get_inspector());
 	}
 
 	if(!detect_docker(tinfo, container_id, container_name))
@@ -208,6 +209,7 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 		existing_container_info = manager->get_container(container_id);
 	}
 
+#ifdef HAS_CAPTURE
 	// Possibly start a lookup for this container info
 	if(!existing_container_info->m_metadata_complete &&
 	    query_os_for_missing_info)
@@ -224,6 +226,7 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 			g_docker_info_source->update_top_tid(container_id, tinfo);
 		}
 	}
+#endif
 
 	// Returning true will prevent other container engines from
 	// trying to resolve the container, so only return true if we
@@ -233,14 +236,22 @@ bool docker::resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, 
 
 void docker::parse_docker_async(sinsp *inspector, std::string &container_id, sinsp_container_manager *manager)
 {
-	auto cb = [manager](const std::string &container_id, const sinsp_container_info &container_info)
+	auto cb = [manager](const std::string &container_id, const container_lookup_result &res)
         {
-		int64_t top_tid = docker::g_docker_info_source->get_top_tid(container_id);
-		// If here, we know it's a docker container, so set the type
-		manager->notify_new_container(container_info, top_tid);
+		if(!res.m_successful)
+		{
+			// Disable further lookups
+			m_enabled = false;
+		}
+		else
+		{
+			int64_t top_tid = docker::g_docker_info_source->get_top_tid(container_id);
+			// If here, we know it's a docker container, so set the type
+			manager->notify_new_container(res.m_container_info, top_tid);
+		}
 	};
 
-        sinsp_container_info dummy;
+        container_lookup_result dummy;
 
 	if (g_docker_info_source->lookup(container_id, dummy, cb))
 	{

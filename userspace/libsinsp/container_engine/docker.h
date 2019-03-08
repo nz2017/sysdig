@@ -41,7 +41,13 @@ class sinsp_threadinfo;
 namespace libsinsp {
 namespace container_engine {
 
-class docker_async_source : public sysdig::async_key_value_source<std::string, sinsp_container_info>
+struct container_lookup_result
+{
+	bool m_successful;
+	sinsp_container_info m_container_info;
+};
+
+class docker_async_source : public sysdig::async_key_value_source<std::string, container_lookup_result>
 {
 	enum docker_response
 	{
@@ -51,10 +57,9 @@ class docker_async_source : public sysdig::async_key_value_source<std::string, s
 	};
 
 public:
-	docker_async_source(uint64_t max_wait_ms, uint64_t ttl_ms);
+	docker_async_source(uint64_t max_wait_ms, uint64_t ttl_ms, sinsp *inspector);
 	virtual ~docker_async_source();
 
-	void set_inspector(sinsp *inspector);
 	static void set_query_image_info(bool query_image_info);
 
 	// Note that this tid is the current top tid for this container
@@ -72,13 +77,23 @@ public:
 protected:
 	void run_impl();
 
+	// These 4 methods are OS-dependent and defined in docker_{linux,win}.cpp
+	void init_docker_conn();
+	void free_docker_conn();
 	std::string build_request(const std::string& url);
-
 	docker_response get_docker(const std::string& url, std::string &json);
+
 	bool parse_docker(std::string &container_id, sinsp_container_info *container);
 
-	static std::string m_api_version;
 	sinsp *m_inspector;
+
+	std::string m_docker_unix_socket_path;
+	std::string m_api_version;
+
+#ifndef _WIN32
+	CURLM *m_curlm;
+	CURL *m_curl;
+#endif
 
 	static bool m_query_image_info;
 
@@ -101,7 +116,6 @@ public:
 	bool resolve(sinsp_container_manager* manager, sinsp_threadinfo* tinfo, bool query_os_for_missing_info);
 	static void cleanup();
 	static void parse_json_mounts(const Json::Value &mnt_obj, std::vector<sinsp_container_info::container_mount_info> &mounts);
-	static void set_enabled(bool enabled);
 
 	// Container name only set for windows. For linux name must be fetched via lookup
 	static bool detect_docker(const sinsp_threadinfo* tinfo, std::string& container_id, std::string &container_name);
