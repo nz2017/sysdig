@@ -241,7 +241,7 @@ endif()
 #
 # Intel tbb
 #
-if(NOT WIN32 AND NOT APPLE)
+if(NOT WIN32)
 	option(USE_BUNDLED_TBB "Enable building of the bundled tbb" ${USE_BUNDLED_DEPS})
 	if(NOT USE_BUNDLED_TBB)
 		find_path(TBB_INCLUDE_DIR tbb.h PATH_SUFFIXES tbb)
